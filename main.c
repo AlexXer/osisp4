@@ -55,43 +55,16 @@ const unsigned char GROUP_TYPE[PROC_COUNT] =
     0, 1, 0, 2, 0, 0, 0, 1, 1
 };
 
-/* Whome to send signal:
- *
- * 0 = none
- * positive = pid
- * negative = processes group
- *
- * f/ex: "-x" means, that signal is sent to the group, process with pid = x is member of
- */
-const char SEND_TO[PROC_COUNT] =
-{
-/*  0,  1,  2,  3,  4,  5,  6,  7,  8  */
-    0, -6,  1,  0, -2,  0,  4,  4,  4
-};
-
-const int SEND_SIGNALS[PROC_COUNT] =
-{
-    0,          /* 0 */
-    SIGUSR1,    /* 1 */
-    SIGUSR2,    /* 2 */
-    0,          /* 3 */
-    SIGUSR1,    /* 4 */
-    0,          /* 5 */
-    SIGUSR1,    /* 6 */
-    SIGUSR2,    /* 7 */
-    SIGUSR1     /* 8 */
-};
-
-const char RECV_SIGNALS_COUNT[2][PROC_COUNT] =
-{
-/*    0, 1, 2, 3, 4, 5, 6, 7, 8  */
-    { 0, 0, 1, 1, 2, 0, 1, 1, 1 },  /* SIGUSR1 */
-    { 0, 1, 0, 0, 1, 0, 0, 0, 0 }   /* SIGUSR2 */
-};
-
-void sig_handler(int signum);
-void set_sig_handler(void (*handler)(void *), int sig_no, int flags);
-
+void print_receive_message(int signum);
+void print_sent_message(int signum);
+void sig_handler1(int signum, siginfo_t *siginfo, void *ucontext);
+void sig_handler2(int signum, siginfo_t *siginfo, void *ucontext);
+void sig_handler3(int signum, siginfo_t *siginfo, void *ucontext);
+void sig_handler4(int signum, siginfo_t *siginfo, void *ucontext);
+void sig_handler6(int signum, siginfo_t *siginfo, void *ucontext);
+void sig_handler7(int signum, siginfo_t *siginfo, void *ucontext);
+void sig_handler8(int signum, siginfo_t *siginfo, void *ucontext);
+void set_sig_handler(void (*handler)(int, siginfo_t *, void *), int sig_no, int flags);
 
 char *exec_name = NULL;
 void print_error_exit(const char *s_name, const char *msg, const int proc_num);
@@ -103,8 +76,6 @@ void kill_wait_for_children();
 void wait_for_children();
 
 pid_t *pids_list = NULL;
-char *tmp_file_name = "/tmp/pids.log";
-
 
 int main(int argc, char *argv[])
 {
@@ -119,10 +90,6 @@ int main(int argc, char *argv[])
     }
 
     forker(0, CHILDS_COUNT[0]);          // create processes tree [2]
-
-//    set_sig_handler(&kill_wait_for_children, SIGINT, 0);   // to kill all by Ctrl+C
-
-    set_sig_handler(&kill_wait_for_children, SIGTERM, 0);
 
     if (proc_id == 0) {                  // main process waits [3]
         wait_for_children();
@@ -139,16 +106,15 @@ int main(int argc, char *argv[])
     fflush(stdout);
 #endif
 
-    if (proc_id == STARTING_PROC_ID) {                  // starter waits for all pids to be available [3]
+    if (proc_id == STARTING_PROC_ID) {
         do{
             for (i = 1; (i <= PROC_COUNT) && (pids_list[i] != 0); ++i) {
 
-                if (pids_list[i] == -1) {
-                    print_error_exit(exec_name, "Error: not all processes forked or initialized.\nHalting.", 0);
-                    exit(1);
+            if (pids_list[i] == -1) {
+                print_error_exit(exec_name, "Error: not all processes forked or initialized.\nHalting.", 0);
+                exit(1);
                 }
             }
-//            printf("%d\t", i);
         } while (i < PROC_COUNT);
 
 #ifdef DEBUG_PIDS
@@ -158,23 +124,45 @@ int main(int argc, char *argv[])
             fflush(stdout);
         }
 #endif
+    }
 
-        FILE *tmp = fopen(tmp_file_name, "wt");
-        if (tmp == NULL) {
-            print_error_exit(exec_name, "Can't create temp file", 0);
-        }
+    set_sig_handler(&kill_wait_for_children, SIGTERM, 0);
 
-        for (i = 1; i < PROC_COUNT; ++i) {
-            fprintf(tmp, "%d\n", pids_list[i]);
-        }
+    switch (proc_id) {
+        case 0:
+            return; //error case
+            break;
+        case 1:
+            set_sig_handler(&sig_handler1, SIGUSR2, SA_SIGINFO);
+            break;
+        case 2:
+            set_sig_handler(&sig_handler2, SIGUSR1, SA_SIGINFO);
+            break;
+        case 3:
+            set_sig_handler(&sig_handler3, SIGUSR1, SA_SIGINFO);
+            break;
+        case 4:
+            set_sig_handler(&sig_handler4, SIGUSR1, SA_SIGINFO);
+            set_sig_handler(&sig_handler4, SIGUSR2, SA_SIGINFO);
+            break;
+        case 5:
+            break; //skip
+        case 6:
+            set_sig_handler(&sig_handler6, SIGUSR1, SA_SIGINFO);
+            break;
+        case 7:
+            set_sig_handler(&sig_handler7, SIGUSR1, SA_SIGINFO);
+            break;
+        case 8:
+            set_sig_handler(&sig_handler8, SIGUSR1, SA_SIGINFO);
+            break;
+        default:
+            print_error_exit(exec_name, "Can't set sighandler!", proc_id);
+    }
 
-        fclose(tmp);
+    if (proc_id == STARTING_PROC_ID) {                  // starter waits for all until all handlers are set [3]
 
-        pids_list[0] = 1;           // all pids are set
-
-        set_sig_handler(&sig_handler, 0, 0);
-
-        do{
+        do {
             for (i = 1+PROC_COUNT; (i < 2*PROC_COUNT)  && (pids_list[i] != 0); ++i) {
 
                 if (pids_list[i] == -1) {
@@ -182,8 +170,9 @@ int main(int argc, char *argv[])
                     exit(1);
                 }
             }
-//            printf("%d\t", i);
         } while (i < 2*PROC_COUNT);
+
+        pids_list[0] = 1;           // all handlers are set
 
         for (i = PROC_COUNT+1; i < 2*PROC_COUNT; ++i) {     /*  reset flags  */
             pids_list[i] = 0;
@@ -198,15 +187,14 @@ int main(int argc, char *argv[])
         puts("==================================");
 #endif
 
-        sig_handler(0); // start signal-flow
+        sig_handler1(0, NULL, NULL); // start signal-flow
 
     } else {    // other processes
 
         do {
-            // wait for all pids to be written
+            // wait for all handlers setting
         } while (pids_list[0] == 0);
 
-        set_sig_handler(&sig_handler, 0, 0);
     }
 
     while (1) {
@@ -242,12 +230,8 @@ long long current_time() {
     struct timeval time;
     gettimeofday(&time, NULL);
 
-    return time.tv_usec;
+    return time.tv_usec / 1000;
 }   /*  current_time  */
-
-
-/*                U1, U2  */
-volatile int usr_recv[2] = {0, 0};
 
 volatile int usr_amount[2][2] =
 {
@@ -256,6 +240,7 @@ volatile int usr_amount[2][2] =
     {0, 0}  /* SIGUSR2 */
 };
 
+volatile int locker = 0;
 
 void kill_wait_for_children() {
     int i = 0;
@@ -287,97 +272,148 @@ void kill_wait_for_children() {
     exit(0);
 }   /*  kill_wait_for_children  */
 
+void print_receive_message(int signum) {
 
-void sig_handler(int signum) {
+    signum = (signum == SIGUSR1) ? 1 : 2;
 
-    if (signum == SIGUSR1) {
-        signum = 0;
-    } else if (signum == SIGUSR2) {
-        signum = 1;
-    } else {
-        signum = -1;
-    }
-
-    if (signum != -1) {
-        ++usr_amount[signum][0];
-        ++usr_recv[signum];
 #ifdef DEBUG_SIGS
-        printf("%lld %d received %s%d\n", current_time(), proc_id,
-               "USR", signum+1 );
+    printf("%lld %d received %s%d\n", current_time(), proc_id,"USR", signum);
 #else
-        printf("%d %d %d получил %s%d %lld\n", proc_id, getpid(), getppid(),
-               "USR", signum+1, current_time() );
+    printf("%d %d %d получил %s%d %lld\n", proc_id, getpid(), getppid(),
+            "USR", signum, current_time() );
 #endif
-        fflush(stdout);
-
-#ifdef DEBUG_SIGS
-    printf("%lld %d has %d:%d\n", current_time(), proc_id, usr_recv[0], usr_recv[1]);
     fflush(stdout);
-#endif
+}
 
-    // for 2-10 variant only:
-    if (proc_id == 1) {
-        if (usr_amount[0][0] + usr_amount[1][0] == MAX_USR_COUNT) {
-            kill_wait_for_children();
-        }
+void print_sent_message(int signum) {
 
-        pids_list[PROC_COUNT + 6] = pids_list[PROC_COUNT + 4] = 0;
-    }
-
-    if (proc_id == 8) {
-        do{
-            // wait for 6th and 4th processes to send signal
-        }while ( (pids_list[PROC_COUNT + 6] + pids_list[PROC_COUNT + 4]) != 2 );
-    }
-
-    if (! ( (usr_recv[0] == RECV_SIGNALS_COUNT[0][proc_id]) &&
-        (usr_recv[1] == RECV_SIGNALS_COUNT[1][proc_id]) ) ) {
-#ifdef DEBUG_SIGS
-            printf("%lld %d not enough!\n",current_time(), proc_id);
-            fflush(stdout);
-#endif
-            if ( (proc_id == 4) && (signum == 0) ) {
-                pids_list[PROC_COUNT + 4] = 1;
-            }
-
-            return;
-        }
-        usr_recv[0] = usr_recv[1] = 0;
-    }
-
-    char to = SEND_TO[proc_id];
-
-    if (to != 0) {
-        signum = ( (SEND_SIGNALS[proc_id] == SIGUSR1) ? 1 : 2);
-        ++usr_amount[signum-1][1];
-    }
+    signum = (signum == SIGUSR1) ? 1 : 2;
 
 #ifdef DEBUG_SIGS
-    printf("%lld %d sent %s%d\n", current_time(), proc_id,
-           "USR", signum);
+    printf("%lld %d sent %s%d\n", current_time(), proc_id, "USR", signum);
 #else
     printf("%d %d %d послал %s%d %lld\n", proc_id, getpid(), getppid(),
            "USR", signum, current_time() );
 #endif
     fflush(stdout);
+}
 
-    if (to > 0) {
-        kill(pids_list[to], SEND_SIGNALS[proc_id]);
-    } else if (to < 0) {
-        kill(-getpgid(pids_list[-to]), SEND_SIGNALS[proc_id]);
-    } else {
+void sig_handler1(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    pids_list[PROC_COUNT + 7] = pids_list[PROC_COUNT + 6] = pids_list[PROC_COUNT + 4] = 0;
+
+    if (signum == SIGUSR2) {
+        ++usr_amount[1][0];
+        print_receive_message(signum);
+    }
+
+    if (usr_amount[0][0] + usr_amount[1][0] == MAX_USR_COUNT) {
+        kill_wait_for_children();
+    }
+
+    ++usr_amount[0][1];
+    print_sent_message(SIGUSR1);
+    kill(-getpgid(pids_list[6]), SIGUSR1);
+}
+
+void sig_handler2(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    if (signum == SIGUSR1) {
+        ++usr_amount[0][0];
+        print_receive_message(signum);
+    }
+
+    ++usr_amount[1][1];
+    print_sent_message(SIGUSR2);
+    kill(pids_list[1], SIGUSR2);
+}
+
+void sig_handler3(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    if (signum == SIGUSR1) {
+        ++usr_amount[0][0];
+        print_receive_message(signum);
+    }
+}
+
+void sig_handler4(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    locker++;
+    pids_list[PROC_COUNT + 4] = 1;
+    if (signum == SIGUSR1) {
+        ++usr_amount[0][0];
+    }
+
+    if (signum == SIGUSR2) {
+        ++usr_amount[1][0];
+    }
+
+    print_receive_message(signum);
+
+    if ( locker != 3) {
+#ifdef DEBUG_SIGS
+        printf("%lld %d not enough!\n",current_time(), proc_id);
+        fflush(stdout);
+#endif
+        //locker++;
         return;
     }
 
-    // for 2-10 variant only:
-    if (proc_id == 6) {
-        pids_list[PROC_COUNT + 6] = 1;
+    locker = 0;
+    ++usr_amount[0][1];
+    print_sent_message(SIGUSR1);
+    kill(-getpgid(pids_list[2]), SIGUSR1);
+}
+
+void sig_handler6(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    if (signum == SIGUSR1) {
+        ++usr_amount[0][0];
+        print_receive_message(signum);
     }
 
-}   /*  handler  */
+    ++usr_amount[0][1];
+    print_sent_message(SIGUSR1);
+    kill(pids_list[4], SIGUSR1);
 
+    pids_list[PROC_COUNT + 6] = 1;
+}
 
-void set_sig_handler(void (*handler)(void *), int sig_no, int flags) {
+void sig_handler7(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    if (signum == SIGUSR1) {
+        ++usr_amount[0][0];
+        print_receive_message(signum);
+    }
+
+    do{
+        // wait for 6th and 4th processes to send signal
+    } while ( (pids_list[PROC_COUNT + 6] + pids_list[PROC_COUNT + 4]) != 2 );
+
+    ++usr_amount[1][1];
+    print_sent_message(SIGUSR2);
+    kill(pids_list[4], SIGUSR2);
+
+    pids_list[PROC_COUNT + 7] = 1;
+}
+
+void sig_handler8(int signum, siginfo_t *siginfo, void *ucontext) {
+
+    if (signum == SIGUSR1) {
+        ++usr_amount[0][0];
+        print_receive_message(signum);
+    }
+
+    do{
+        // wait for 7th, 6th and 4th processes to send signal
+    } while ( (pids_list[PROC_COUNT + 7] + pids_list[PROC_COUNT + 6] + pids_list[PROC_COUNT + 4]) != 3 );
+
+    ++usr_amount[0][1];
+    print_sent_message(SIGUSR1);
+    kill(pids_list[4], SIGUSR1);
+}
+
+void set_sig_handler(void (*handler)(int, siginfo_t *, void *), int sig_no, int flags) {
     struct sigaction sa, oldsa;             // set sighandler [4]
 
     sigset_t block_mask;
@@ -387,33 +423,24 @@ void set_sig_handler(void (*handler)(void *), int sig_no, int flags) {
 
     sa.sa_mask = block_mask;
     sa.sa_flags = flags;
-    sa.sa_handler = handler;
 
-    if (sig_no != 0) {
-        sigaction(sig_no, &sa, &oldsa);
-        return;
+    if ((sa.sa_flags & SA_SIGINFO) == SA_SIGINFO) { // flag SA_SIGINFO was chosen
+        sa.sa_sigaction = handler;
+    } else {
+        sa.sa_handler = handler;
     }
 
-    int i = 0;
-    for (i = 0; i < PROC_COUNT; ++i) {
-        char to = SEND_TO[i];
-                                                                         /* someone sends me a signal: */
-        if ( ( (to > 0) && (to == proc_id) )  ||                             /* <- directly */
-             ( (to < 0) && (getpgid(pids_list[-to]) == getpgid(0)) ) ) {      /* <- or through the group */
+    if ( sigaction(sig_no, &sa, &oldsa) == -1 ) {
+        print_error_exit(exec_name, "Can't set sighandler!", proc_id);
+        pids_list[proc_id + PROC_COUNT] = 0;
+    } else {
+        pids_list[proc_id + PROC_COUNT] = 1;
+    }
 
-            if (SEND_SIGNALS[i] != 0) { // signal is really sent
-                if (sigaction(SEND_SIGNALS[i], &sa, &oldsa) == -1) {
-                    print_error_exit(exec_name, "Can't set sighandler!", proc_id);
-                }
 #ifdef DEBUG_HANDS
-                printf("%d) will receive a signal %d from %d\n", proc_id, SEND_SIGNALS[i], i);
-                fflush(stdout);
+    printf("%d will receive a signal %d\n", proc_id, sig_no);
+    fflush(stdout);
 #endif
-            }
-        }
-    }   /* for */
-
-    pids_list[proc_id + PROC_COUNT] = 1;
 
 }   /*  set_sig_handler  */
 
